@@ -3,63 +3,119 @@
 #include <errno.h>
 #include <unistd.h>
 #include <string.h>
+#include <ctype.h>
+#include <stdlib.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
-void parse_cmd_line(FILE *in, char **command)
+typedef struct {
+        // command arg arg | command > arg | command < arg > arg
+        char **commands;
+        // three
+        int  ncommands;
+        // two
+        int npipes;
+        char **args[];
+} CMD;
+
+int ntoken(char *token, char *sep)
 {
-        char **args;
-        size_t len = 0;
-        size_t argsn = 0;
-        size_t r = getline(command, &len, in);
+        int n = 0;
+        char *t;
+        while((t = strsep(&token, sep)) != NULL)
+        {
+                n++;
+        }
+        return n;
+}
+
+void trim(char *str)
+{
+    char *start, *end;
+
+    if (str == NULL || *str == '\0') {
+        return;
+    }
+
+    start = str;
+    while (isspace((unsigned char)*start)) {
+        start++;
+    }
+
+    if (*start == '\0') {
+        *str = '\0';
+        return;
+    }
+
+    end = start + strlen(start) - 1;
+    while (end > start && isspace((unsigned char)*end)) {
+        end--;
+    }
+
+    *(end + 1) = '\0';
+
+    memmove(str, start, end - start + 2);
+}
+
+void *parse_cmd_line(FILE *in, char **command)
+{
+        int n;
+        size_t l = 0;
+
+        size_t r = getline(command, &l, in);
         if (r == -1)
         {
                 printf("failed to get command line\n");
                 exit(1);
         }
+
         (*command)[r-1] = '\0';
-
-        char *token;
-        char *temp = strdup(*command);
-        if (temp == NULL)
-        {
-                printf("strdup command\n");
-                exit(1);
-        }
-
-        while((token = strsep(command, " ")) != NULL)
-        {
-                argsn++;
-        }
-        args = malloc(argsn - 1);
-        if (args == NULL)
-        {
-                printf("malloc args\n");
-                exit(1);
-        }
+        char *x = strdup(*command);
+        n = ntoken(x, "|");
+        free(x);
+        CMD *c = malloc(sizeof(CMD) + (n+1) * sizeof(char *));
+        if (n!= 0) c->npipes = n - 1;
+        c->ncommands = n;
 
         int i = 0;
-        while((token = strsep(&temp, " ")) != NULL)
+        char *cmd;
+        while((cmd = strsep(command, "|")) != NULL)
         {
-                if (i == 0)
+                trim(cmd);
+                int nargs;
+                char *t;
+
+                char *y = strdup(cmd);
+                nargs = ntoken(y, " ");
+                free(y);
+                c->args[i] = malloc(nargs + 1);
+                if (c->args[i] ==  NULL)
                 {
-                        i++;
-                } else 
-                {
-                        (args)[i-1] = strdup(token);
-                        i++;
+                        perror("malloc failed");
+                        exit(1);
                 }
+
+                int j = 0;
+                while((t = strsep(&cmd, " ")) != NULL)
+                {
+                        c->args[i][j] = strdup(t);
+                        j++;
+                }
+                i++;
         }
 
-        for(size_t i = 0; i < (argsn-1); i++)
-        {
-                printf("%s\n", args[i]);
-        }
+
+        return c;
 }
+
 
 int main(int argc, char *argv[])
 {
         (void)argc;
         (void)argv;
 
+        CMD *c;
         char *command;
         FILE *in;
 
@@ -74,7 +130,34 @@ int main(int argc, char *argv[])
         {
                 printf("wish> ");
 
-                parse_cmd_line(in, &command);
+                c = parse_cmd_line(in, &command);
+                pid_t pids[c->ncommands];
+                int i;
+
+                for (i = 0; i <= c->npipes; i++)
+                {
+                        int pid;
+
+                        pid = fork();
+                        if (pid < 0)
+                        {
+                                perror("fork");
+                                exit(1);
+                        } else if (pid == 0)
+                        {
+                                pids[i] = pid;
+                                execvp(c->args[i][0], c->args[i]);
+                        }
+                }
+
+                for (i = 0; i < c->ncommands; i++) 
+                {
+                        int status;
+
+                        (void)waitpid(pids[i], &status, 0);
+                }
+
+
         }
         return 0;
 }
