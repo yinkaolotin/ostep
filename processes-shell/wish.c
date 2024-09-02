@@ -8,6 +8,7 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <fcntl.h>
 
 typedef struct {
         // command arg arg | command > arg | command < arg > arg
@@ -75,6 +76,7 @@ void *parse_cmd_line(FILE *in, char **command)
         n = ntoken(x, "|");
         free(x);
         CMD *c = malloc(sizeof(CMD) + (n+1) * sizeof(char *));
+        c->commands = malloc(n+1);
         if (n!= 0) c->npipes = n - 1;
         c->ncommands = n;
 
@@ -82,9 +84,11 @@ void *parse_cmd_line(FILE *in, char **command)
         char *cmd;
         while((cmd = strsep(command, "|")) != NULL)
         {
-                trim(cmd);
                 int nargs;
                 char *t;
+
+                trim(cmd);
+                c->commands[i] = strdup(cmd);
 
                 char *y = strdup(cmd);
                 nargs = ntoken(y, " ");
@@ -134,9 +138,18 @@ int main(int argc, char *argv[])
                 pid_t pids[c->ncommands];
                 int i;
 
+                static int saved_pipe;
                 for (i = 0; i <= c->npipes; i++)
                 {
                         int pid;
+                        int pipefd[2];
+
+                        if (pipe(pipefd) == -1)
+                        {
+                                perror("pipe");
+                                exit(1);
+                        }
+
 
                         pid = fork();
                         if (pid < 0)
@@ -146,8 +159,81 @@ int main(int argc, char *argv[])
                         } else if (pid == 0)
                         {
                                 pids[i] = pid;
+
+                                if (i == 0)
+                                {
+                                        close(pipefd[0]);
+
+                                        /*
+                                        if (strstr(c->commands[i], "<"))
+                                        {
+                                                int input_file;
+                                                char *f;
+                                                int j = 0;
+                                                while(c->args[i][i] != NULL)
+                                                {
+                                                        if (strcmp(c->args[i][j], "<") == 0)
+                                                        {
+                                                                // what if file is missing
+                                                                file = strdup(c->args[i][j+1]);
+                                                                break;
+                                                        }
+                                                }
+
+                                                input_file = open(f, O_RDONLY);
+                                                if (input_file == -1)
+                                                {
+                                                        perror("open first input file");
+                                                        exit(1);
+                                                }
+
+                                                close(STDIN_FILENO);
+                                                dup2(input_file, STDIN_FILENO);
+                                                close(input_file);
+                                        }
+
+                                        if (strstr(c->commands[i], ">"))
+                                        {
+                                                int output_file;
+                                                char *f;
+                                                int j = 0;
+                                                while(c->args[i][i] != NULL)
+                                                {
+                                                        if (strcmp(c->args[i][j], ">") == 0)
+                                                        {
+                                                                // what if file is missing
+                                                                file = strdup(c->args[i][j+1]);
+                                                                break;
+                                                        }
+                                                }
+
+                                                output_file = open(f, O_WRONLY);
+                                                if (input_file == -1)
+                                                {
+                                                        perror("open first output file");
+                                                        exit(1);
+                                                }
+
+                                                close(STDOUT_FILENO);
+                                                dup2(output_file, STDOUT_FILENO);
+                                                close(output_file);
+
+                                        }
+                                        */
+
+                                        close(STDOUT_FILENO);
+                                        dup2(pipefd[1], STDOUT_FILENO);
+                                        saved_pipe = pipefd[1];
+                                }
+
+                                if (i == c->npipes)
+                                {
+                                        close(STDIN_FILENO);
+                                        dup2(saved_pipe, STDIN_FILENO);
+                                }
                                 execvp(c->args[i][0], c->args[i]);
                         }
+
                 }
 
                 for (i = 0; i < c->ncommands; i++) 
