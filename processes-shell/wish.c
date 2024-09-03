@@ -135,21 +135,27 @@ int main(int argc, char *argv[])
                 printf("wish> ");
 
                 c = parse_cmd_line(in, &command);
+
                 pid_t pids[c->ncommands];
+                int pipes[c->npipes][2];
                 int i;
 
-                static int saved_pipe;
-                for (i = 0; i <= c->npipes; i++)
+                for (i = 0; i < c->npipes; i++)
                 {
-                        int pid;
-                        int pipefd[2];
-
-                        if (pipe(pipefd) == -1)
+                        int p[2];
+                        if (pipe(p) == -1)
                         {
                                 perror("pipe");
                                 exit(1);
                         }
 
+                        pipes[i][0] = p[0];
+                        pipes[i][1] = p[1];
+                }
+
+                for (i = 0; i <= c->npipes; i++)
+                {
+                        int pid;
 
                         pid = fork();
                         if (pid < 0)
@@ -162,7 +168,6 @@ int main(int argc, char *argv[])
 
                                 if (i == 0)
                                 {
-                                        close(pipefd[0]);
 
                                         /*
                                         if (strstr(c->commands[i], "<"))
@@ -221,15 +226,13 @@ int main(int argc, char *argv[])
                                         }
                                         */
 
-                                        close(STDOUT_FILENO);
-                                        dup2(pipefd[1], STDOUT_FILENO);
-                                        saved_pipe = pipefd[1];
+                                        dup2(pipes[i][1], STDOUT_FILENO);
+                                //        close(pipefd[1]);
                                 }
 
                                 if (i == c->npipes)
                                 {
-                                        close(STDIN_FILENO);
-                                        dup2(saved_pipe, STDIN_FILENO);
+                                        dup2(pipes[i-1][0], STDIN_FILENO);
                                 }
                                 execvp(c->args[i][0], c->args[i]);
                         }
